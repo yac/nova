@@ -37,6 +37,7 @@ from nova.api import auth
 from nova.api import ec2
 from nova.api.ec2 import apirequest
 from nova.api.ec2 import ec2utils
+from nova.api.ec2 import ec2_error_ex
 from nova import block_device
 from nova import context
 from nova import exception
@@ -212,6 +213,18 @@ class Ec2utilsTestCase(test.TestCase):
                         matchers.DictListMatches(expected_result))
 
 
+class TestClientExceptionEC2(Exception):
+    ec2_code = 'ClientException.Test'
+    message = _("Test Client Exception.")
+    code = 400
+
+
+class TestServerExceptionEC2(Exception):
+    ec2_code = 'ServerException.Test'
+    message = _("Test Server Exception.")
+    code = 500
+
+
 class ApiEc2TestCase(test.TestCase):
     """Unit test for the cloud controller on an EC2 API."""
     def setUp(self):
@@ -247,6 +260,13 @@ class ApiEc2TestCase(test.TestCase):
         else:
             self.ec2.new_http_connection(host, is_secure).AndReturn(self.http)
         return self.http
+
+    def test_exception_ec2_client(self):
+        """
+        Test handling of client EC2 exceptions.
+        """
+        #ec2_error_ex(TestClientExceptionEC2)
+        pass
 
     def test_return_valid_isoformat(self):
         """
@@ -455,10 +475,9 @@ class ApiEc2TestCase(test.TestCase):
         # Invalid protocol
         _assert('Invalid IP protocol', 'xyz', 1, 14, '0.0.0.0/0')
         # Invalid port
-        _assert('An unknown error has occurred', 'tcp', " ", "81", '0.0.0.0/0')
+        _assert('Invalid input received', 'tcp', " ", "81", '0.0.0.0/0')
         # Invalid icmp port
-        _assert('An unknown error has occurred', 'icmp', " ", "81",
-                '0.0.0.0/0')
+        _assert('Invalid input received', 'icmp', " ", "81", '0.0.0.0/0')
         # Invalid CIDR Address
         _assert('Invalid CIDR', 'icmp', -1, -1, '0.0.0.0')
         # Invalid CIDR Address

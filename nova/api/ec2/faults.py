@@ -17,9 +17,41 @@ import webob.dec
 import webob.exc
 
 from nova import context
+from nova.openstack.common import log as logging
 from nova import utils
 
 CONF = cfg.CONF
+LOG = logging.getLogger(__name__)
+
+
+def exception_to_ec2code(ex):
+    """Helper to extract EC2 error code from exception.
+
+    For other than EC2 exceptions (those without ec2_code attribute),
+    use exception name.
+    """
+    if hasattr(ex, 'ec2_code'):
+        code = ex.ec2_code
+    else:
+        code = type(ex).__name__
+    return code
+
+
+def ec2_error_response(request_id, code, message, status=500):
+    """Helper to construct an EC2 compatible error reposne."""
+    LOG.debug(_('EC2 error response: %(code)s: %(message)s') %
+                {'code': code, 'message': message})
+    resp = webob.Response()
+    resp.status = status
+    resp.headers['Content-Type'] = 'text/xml'
+    resp.body = str('<?xml version="1.0"?>\n'
+                    '<Response><Errors><Error><Code>%s</Code>'
+                    '<Message>%s</Message></Error></Errors>'
+                    '<RequestID>%s</RequestID></Response>' %
+                    (utils.xhtml_escape(utils.utf8(code)),
+                     utils.xhtml_escape(utils.utf8(message)),
+                     utils.xhtml_escape(utils.utf8(request_id))))
+    return resp
 
 
 class Fault(webob.exc.HTTPException):
@@ -32,12 +64,12 @@ class Fault(webob.exc.HTTPException):
     @webob.dec.wsgify
     def __call__(self, req):
         """Generate a WSGI response based on the exception passed to ctor."""
-        code = self.wrapped_exc.status_int
+        code = exception_to_ec2code(self.wrapped_exc)
+        status = self.wrapped_exc.status_int
         message = self.wrapped_exc.explanation
 
-        if code == 501:
+        if status == 501:
             message = "The requested function is not supported"
-        code = str(code)
 
         if 'AWSAccessKeyId' not in req.params:
             raise webob.exc.HTTPBadRequest()
@@ -50,16 +82,6 @@ class Fault(webob.exc.HTTPException):
         ctxt = context.RequestContext(user_id,
                                       project_id,
                                       remote_address=remote_address)
-
-        resp = webob.Response()
-        resp.status = self.wrapped_exc.status_int
-        resp.headers['Content-Type'] = 'text/xml'
-        resp.body = str('<?xml version="1.0"?>\n'
-                         '<Response><Errors><Error><Code>%s</Code>'
-                         '<Message>%s</Message></Error></Errors>'
-                         '<RequestID>%s</RequestID></Response>' %
-                         (utils.xhtml_escape(utils.utf8(code)),
-                          utils.xhtml_escape(utils.utf8(message)),
-                          utils.xhtml_escape(utils.utf8(ctxt.request_id))))
-
+        resp = ec2_error_response(ctxt.request_id, code,
+                                  message=message, status=status)
         return resp

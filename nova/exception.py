@@ -151,16 +151,6 @@ class NovaException(Exception):
             return unicode(self)
 
 
-class EC2APIError(NovaException):
-    message = _("Unknown")
-
-    def __init__(self, message=None, code=None):
-        self.msg = message
-        self.code = code
-        outstr = '%s' % message
-        super(EC2APIError, self).__init__(outstr)
-
-
 class EncryptionFailure(NovaException):
     message = _("Failed to encrypt text: %(reason)s")
 
@@ -232,6 +222,10 @@ class InvalidBDMFormat(InvalidBDM):
 class InvalidBDMForLegacy(InvalidBDM):
     message = _("Block Device Mapping cannot "
                 "be converted to legacy format. ")
+
+
+class InvalidAttribute(Invalid):
+    message = _("Attribute not supported: %(attr)s")
 
 
 class VolumeUnattached(Invalid):
@@ -488,6 +482,7 @@ class ImageNotFound(NotFound):
     message = _("Image %(image_id)s could not be found.")
 
 
+# NOTE(jruzicka): ImageNotFound is not a valid EC2 error reponse.
 class ImageNotFoundEC2(ImageNotFound):
     message = _("Image %(image_id)s could not be found. The nova EC2 API "
                 "assigns image ids dynamically when they are listed for the "
@@ -1100,7 +1095,8 @@ class MarkerNotFound(NotFound):
     message = _("Marker %(marker)s could not be found.")
 
 
-class InvalidInstanceIDMalformed(Invalid):
+class InvalidInstanceIDMalformedEC2(Invalid):
+    ec2_code = 'InvalidInstanceID.Malformed'
     message = _("Invalid id: %(val)s (expecting \"i-...\").")
 
 
@@ -1280,3 +1276,51 @@ class InstanceGroupMemberNotFound(NotFound):
 
 class InstanceGroupPolicyNotFound(NotFound):
     message = _("Instance group %(group_uuid)s has no policy %(policy)s.")
+
+
+class ResourceLimitExceededEC2(QuotaError):
+    ec2_code = 'ResourceLimitExceeded'
+    message = _("Maximum number of %(overs)s exceeded")
+
+
+class MissingParameterEC2(NovaException):
+    ec2_code = 'MissingParameter'
+    message = _("Not enough parameters: %(reason)s")
+    code = 400
+
+
+class InvalidKeyPairNotFoundEC2(InvalidKeypair):
+    ec2_code = 'InvalidKeyPair.NotFound'
+    message = _("Couldn't find key pair(s): %(keypair)s")
+
+
+class InvalidPermissionDuplicateEC2(Invalid):
+    ec2_code = 'InvalidPermission.Duplicate'
+    message = _("Rule already exists in group: %(rule)s")
+
+
+class InvalidGroupDuplicateEC2(Invalid):
+    ec2_code = 'InvalidGroup.Duplicate'
+    message = _("Group already exists in group: %(group)s")
+
+
+class AuthFailureEC2(NotAuthorized):
+    ec2_code = 'AuthFailure'
+
+
+class IncorrectStateEC2(NovaException):
+    ec2_code = 'IncorrectState'
+    message = _("Resource is in an incorrect state.")
+    code = 400
+
+
+class UnsupportedOperationEC2(NovaException):
+    ec2_code = 'UnsupportedOperation'
+    message = _("Operation not supported.")
+    code = 400
+
+
+# Cannot be templated, msg needs to be constructed when raised.
+class InternalErrorEC2(NovaException):
+    ec2_code = 'InternalError'
+    message = "%(err)s"

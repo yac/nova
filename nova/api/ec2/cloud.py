@@ -87,11 +87,11 @@ QUOTAS = quota.QUOTAS
 
 def validate_ec2_id(val):
     if not validator.validate_str()(val):
-        raise exception.InvalidInstanceIDMalformed(val=val)
+        raise exception.InvalidInstanceIDMalformedEC2(val=val)
     try:
         ec2utils.ec2_id_to_id(val)
     except exception.InvalidEc2Id:
-        raise exception.InvalidInstanceIDMalformed(val=val)
+        raise exception.InvalidInstanceIDMalformedEC2(val=val)
 
 
 # EC2 API can return the following values as documented in the EC2 API
@@ -423,9 +423,8 @@ class CloudController(object):
 
         #If looking for non existent key pair
         if key_name is not None and not key_pairs:
-            msg = _('Could not find key pair(s): %s') % ','.join(key_name)
-            raise exception.KeypairNotFound(msg,
-                                            code="InvalidKeyPair.Duplicate")
+            keypairs = ','.join(key_name)
+            raise exception.InvalidKeyPairNotFoundEC2(keypair=keypairs)
 
         result = []
         for key_pair in key_pairs:
@@ -442,13 +441,10 @@ class CloudController(object):
     def create_key_pair(self, context, key_name, **kwargs):
         LOG.audit(_("Create key pair %s"), key_name, context=context)
 
-        try:
-            keypair = self.keypair_api.create_key_pair(context,
-                                                       context.user_id,
-                                                       key_name)
-        except exception.KeypairLimitExceeded:
-            msg = _("Quota exceeded, too many key pairs.")
-            raise exception.EC2APIError(msg, code='ResourceLimitExceeded')
+        keypair = self.keypair_api.create_key_pair(context,
+                                                   context.user_id,
+                                                   key_name)
+
         return {'keyName': key_name,
                 'keyFingerprint': keypair['fingerprint'],
                 'keyMaterial': keypair['private_key']}
@@ -460,17 +456,10 @@ class CloudController(object):
 
         public_key = base64.b64decode(public_key_material)
 
-        try:
-            keypair = self.keypair_api.import_key_pair(context,
-                                                       context.user_id,
-                                                       key_name,
-                                                       public_key)
-        except exception.KeypairLimitExceeded:
-            msg = _("Quota exceeded, too many key pairs.")
-            raise exception.EC2APIError(msg)
-        except exception.InvalidKeypair:
-            msg = _("Keypair data is invalid")
-            raise exception.EC2APIError(msg)
+        keypair = self.keypair_api.import_key_pair(context,
+                                                   context.user_id,
+                                                   key_name,
+                                                   public_key)
 
         return {'keyName': key_name,
                 'keyFingerprint': keypair['fingerprint']}
@@ -618,20 +607,22 @@ class CloudController(object):
 
     def _validate_group_identifier(self, group_name, group_id):
         if not group_name and not group_id:
-            err = _("Not enough parameters, need group_name or group_id")
-            raise exception.EC2APIError(err)
+            err = _("need group_name or group_id")
+            raise exception.MissingParameterEC2(reason=err)
 
     def _validate_rulevalues(self, rulesvalues):
         if not rulesvalues:
-            err = _("%s Not enough parameters to build a valid rule")
-            raise exception.EC2APIError(err % rulesvalues)
+            err = _("can't build a valid rule")
+            raise exception.MissingParameterEC2(reason=err)
 
     def _validate_security_group_protocol(self, values):
         validprotocols = ['tcp', 'udp', 'icmp', '6', '17', '1']
         if 'ip_protocol' in values and \
             values['ip_protocol'] not in validprotocols:
-            err = _('Invalid IP protocol %s.') % values['ip_protocol']
-            raise exception.EC2APIError(message=err, code="400")
+            protocol = values['ip_protocol']
+            err = _("Invalid IP protocol %(protocol)s") % \
+                  {'protocol': protocol}
+            raise exception.InvalidParameterValue(message=err)
 
     def revoke_security_group_ingress(self, context, group_name=None,
                                       group_id=None, **kwargs):
@@ -660,7 +651,8 @@ class CloudController(object):
 
             return True
 
-        raise exception.EC2APIError(_("No rule for the specified parameters."))
+        msg = _("No rule for the specified parameters.")
+        raise exception.InvalidParameterValue(message=msg)
 
     # TODO(soren): This has only been tested with Boto as the client.
     #              Unfortunately, it seems Boto is using an old API
@@ -683,8 +675,8 @@ class CloudController(object):
                 values_for_rule['parent_group_id'] = security_group['id']
                 if self.security_group_api.rule_exists(security_group,
                                                        values_for_rule):
-                    err = _('%s - This rule already exists in group')
-                    raise exception.EC2APIError(err % values_for_rule)
+                    raise exception.InvalidPermissionDuplicateEC2(
+                                    rule=values_for_rule)
                 postvalues.append(values_for_rule)
 
         if postvalues:
@@ -692,7 +684,8 @@ class CloudController(object):
                                            security_group['name'], postvalues)
             return True
 
-        raise exception.EC2APIError(_("No rule for the specified parameters."))
+        msg = _("No rule for the specified parameters.")
+        raise exception.InvalidParameterValue(message=msg)
 
     def _get_source_project_id(self, context, source_security_group_owner_id):
         if source_security_group_owner_id:
@@ -738,8 +731,8 @@ class CloudController(object):
     def delete_security_group(self, context, group_name=None, group_id=None,
                               **kwargs):
         if not group_name and not group_id:
-            err = _("Not enough parameters, need group_name or group_id")
-            raise exception.EC2APIError(err)
+            err = _("need group_name or group_id")
+            raise exception.MissingParameterEC2(reason=err)
 
         security_group = self.security_group_api.get(context, group_name,
                                                      group_id)
@@ -868,7 +861,7 @@ class CloudController(object):
         try:
             self.volume_api.delete(context, volume_id)
         except exception.InvalidVolume:
-            raise exception.EC2APIError(_('Delete Failed'))
+            raise exception.InternalErrorEC2(_('Delete failed'))
 
         return True
 
@@ -892,7 +885,7 @@ class CloudController(object):
             self.compute_api.attach_volume(context, instance,
                                            volume_id, device)
         except exception.InvalidVolume:
-            raise exception.EC2APIError(_('Attach Failed.'))
+            raise exception.InternalErrorEC2(_('Attach failed'))
 
         volume = self.volume_api.get(context, volume_id)
         return {'attachTime': volume['attach_time'],
@@ -921,7 +914,7 @@ class CloudController(object):
         try:
             self.compute_api.detach_volume(context, instance, volume)
         except exception.InvalidVolume:
-            raise exception.EC2APIError(_('Detach Volume Failed.'))
+            raise exception.InternalErrorEC2(_('Detach volume failed'))
 
         return {'attachTime': volume['attach_time'],
                 'device': volume['mountpoint'],
@@ -947,8 +940,7 @@ class CloudController(object):
     def describe_instance_attribute(self, context, instance_id, attribute,
                                     **kwargs):
         def _unsupported_attribute(instance, result):
-            raise exception.EC2APIError(_('attribute not supported: %s') %
-                                     attribute)
+            raise exception.InvalidAttribute(attr=attribute)
 
         def _format_attr_block_device_mapping(instance, result):
             tmp = {}
@@ -1003,8 +995,7 @@ class CloudController(object):
 
         fn = attribute_formatter.get(attribute)
         if fn is None:
-            raise exception.EC2APIError(
-                _('attribute not supported: %s') % attribute)
+            raise exception.InvalidAttribute(attr=attribute)
 
         validate_ec2_id(instance_id)
         instance_uuid = ec2utils.ec2_inst_id_to_uuid(context, instance_id)
@@ -1240,10 +1231,7 @@ class CloudController(object):
 
     def allocate_address(self, context, **kwargs):
         LOG.audit(_("Allocate address"), context=context)
-        try:
-            public_ip = self.network_api.allocate_floating_ip(context)
-        except exception.FloatingIpLimitExceeded:
-            raise exception.EC2APIError(_('No more floating IPs available'))
+        public_ip = self.network_api.allocate_floating_ip(context)
         return {'publicIp': public_ip}
 
     def release_address(self, context, public_ip, **kwargs):
@@ -1252,7 +1240,8 @@ class CloudController(object):
             self.network_api.release_floating_ip(context, address=public_ip)
             return {'return': "true"}
         except exception.FloatingIpNotFound:
-            raise exception.EC2APIError(_('Unable to release IP Address.'))
+            err = _('Unable to release IP Address.')
+            raise exception.InternalErrorEC2(err)
 
     def associate_address(self, context, instance_id, public_ip, **kwargs):
         LOG.audit(_("Associate address %(public_ip)s to instance "
@@ -1266,7 +1255,7 @@ class CloudController(object):
         fixed_ips = cached_ipinfo['fixed_ips'] + cached_ipinfo['fixed_ip6s']
         if not fixed_ips:
             msg = _('Unable to associate IP Address, no fixed_ips.')
-            raise exception.EC2APIError(msg)
+            raise exception.UnsupportedOperationEC2(message=msg)
 
         # TODO(tr3buchet): this will associate the floating IP with the
         # first fixed_ip an instance has. This should be
@@ -1283,14 +1272,14 @@ class CloudController(object):
             return {'return': 'true'}
         except exception.FloatingIpAssociated:
             msg = _('Floating ip is already associated.')
-            raise exception.EC2APIError(msg)
+            raise exception.UnsupportedOperationEC2(message=msg)
         except exception.NoFloatingIpInterface:
             msg = _('l3driver call to add floating ip failed.')
-            raise exception.EC2APIError(msg)
+            raise exception.InternalErrorEC2(message=msg)
         except Exception:
             msg = _('Error, unable to associate floating ip.')
             LOG.exception(msg)
-            raise exception.EC2APIError(msg)
+            raise exception.InternalErrorEC2(message=msg)
 
     def disassociate_address(self, context, public_ip, **kwargs):
         instance_id = self.network_api.get_instance_id_by_floating_address(
@@ -1302,10 +1291,10 @@ class CloudController(object):
                                                       address=public_ip)
         except exception.FloatingIpNotAssociated:
             msg = _('Floating ip is not associated.')
-            raise exception.EC2APIError(msg)
+            raise exception.UnsupportedOperationEC2(message=msg)
         except exception.CannotDisassociateAutoAssignedFloatingIP:
             msg = _('Cannot disassociate auto assigned floating ip')
-            raise exception.EC2APIError(msg)
+            raise exception.UnsupportedOperationEC2(message=msg)
 
         return {'return': "true"}
 
@@ -1328,10 +1317,14 @@ class CloudController(object):
         if image:
             image_state = self._get_image_state(image)
         else:
+            # NOTE(jruzicka): ImageNotFound is not a valid EC2 error reponse.
             raise exception.ImageNotFoundEC2(image_id=kwargs['image_id'])
 
         if image_state != 'available':
-            raise exception.EC2APIError(_('Image must be available'))
+            msg = _('Image must be available')
+            # NOTE(jruzicka): IncorrectState is used for volumes in EC2,
+            # but it still seems like the most appropriate option.
+            raise exception.IncorrectStateEC2(message=msg)
 
         (instances, resv_id) = self.compute_api.create(context,
             instance_type=flavors.get_flavor_by_name(
@@ -1506,7 +1499,8 @@ class CloudController(object):
         if image_location is None and kwargs.get('name'):
             image_location = kwargs['name']
         if image_location is None:
-            raise exception.EC2APIError(_('imageLocation is required'))
+            msg = _('imageLocation is required')
+            raise exception.MissingParameterEC2(reason=msg)
 
         metadata = {'properties': {'image_location': image_location}}
 
@@ -1570,8 +1564,7 @@ class CloudController(object):
 
         fn = supported_attributes.get(attribute)
         if fn is None:
-            raise exception.EC2APIError(_('attribute not supported: %s')
-                                     % attribute)
+            raise exception.InvalidAttribute(attr=attribute)
         try:
             image = self._get_image(context, image_id)
         except exception.NotFound:
@@ -1585,15 +1578,16 @@ class CloudController(object):
                                operation_type, **kwargs):
         # TODO(devcamcar): Support users and groups other than 'all'.
         if attribute != 'launchPermission':
-            raise exception.EC2APIError(_('attribute not supported: %s')
-                                     % attribute)
+            raise exception.InvalidAttribute(attr=attribute)
         if 'user_group' not in kwargs:
-            raise exception.EC2APIError(_('user or group not specified'))
+            msg = _('user or group not specified')
+            raise exception.MissingParameterEC2(reason=msg)
         if len(kwargs['user_group']) != 1 and kwargs['user_group'][0] != 'all':
-            raise exception.EC2APIError(_('only group "all" is supported'))
+            msg = _('only group "all" is supported')
+            raise exception.InvalidParameterValue(message=msg)
         if operation_type not in ['add', 'remove']:
             msg = _('operation_type must be add or remove')
-            raise exception.EC2APIError(msg)
+            raise exception.InvalidParameterValue(message=msg)
         LOG.audit(_("Updating image %s publicity"), image_id, context=context)
 
         try:
@@ -1607,8 +1601,8 @@ class CloudController(object):
         try:
             return self.image_service.update(context, internal_id, image)
         except exception.ImageNotAuthorized:
-            msg = _('Not allowed to modify attributes for image %s')
-            raise exception.EC2APIError(msg % image_id)
+            msg = _('Not allowed to modify attributes for image %s') % image_id
+            raise exception.AuthFailureEC2(message=msg)
 
     def update_image(self, context, image_id, **kwargs):
         internal_id = ec2utils.ec2_id_to_id(image_id)
@@ -1666,8 +1660,8 @@ class CloudController(object):
                 #                 Or is there any better way?
                 timeout = 1 * 60 * 60
                 if time.time() > start_time + timeout:
-                    raise exception.EC2APIError(
-                        _('Couldn\'t stop instance with in %d sec') % timeout)
+                    err = _("Couldn't stop instance within %d sec") % timeout
+                    raise exception.InternalErrorEC2(message=err)
 
         glance_uuid = instance['image_ref']
         ec2_image_id = ec2utils.glance_id_to_ec2_id(context, glance_uuid)
@@ -1710,30 +1704,34 @@ class CloudController(object):
         resources = kwargs.get('resource_id', None)
         tags = kwargs.get('tag', None)
         if resources is None or tags is None:
-            raise exception.EC2APIError(_('resource_id and tag are required'))
+            msg = _('resource_id and tag are required')
+            raise exception.MissingParameterEC2(reason=msg)
 
         if not isinstance(resources, (tuple, list, set)):
-            raise exception.EC2APIError(_('Expecting a list of resources'))
+            msg = _('Expecting a list of resources')
+            raise exception.InvalidParameterValue(message=msg)
 
         for r in resources:
             if ec2utils.resource_type_from_id(context, r) != 'instance':
-                raise exception.EC2APIError(_('Only instances implemented'))
+                msg = _('Only instances implemented')
+                raise exception.InvalidParameterValue(message=msg)
 
         if not isinstance(tags, (tuple, list, set)):
-            raise exception.EC2APIError(_('Expecting a list of tagSets'))
+            msg = _('Expecting a list of tagSets')
+            raise exception.InvalidParameterValue(message=msg)
 
         metadata = {}
         for tag in tags:
             if not isinstance(tag, dict):
-                raise exception.EC2APIError(_
-                        ('Expecting tagSet to be key/value pairs'))
+                err = _('Expecting tagSet to be key/value pairs')
+                raise exception.InvalidParameterValue(message=err)
 
             key = tag.get('key', None)
             val = tag.get('value', None)
 
             if key is None or val is None:
-                raise exception.EC2APIError(_
-                        ('Expecting both key and value to be set'))
+                err = _('Expecting both key and value to be set')
+                raise exception.InvalidParameterValue(message=err)
 
             metadata[key] = val
 
@@ -1755,29 +1753,34 @@ class CloudController(object):
         resources = kwargs.get('resource_id', None)
         tags = kwargs.get('tag', None)
         if resources is None or tags is None:
-            raise exception.EC2APIError(_('resource_id and tag are required'))
+            msg = _('resource_id and tag are required')
+            raise exception.MissingParameterEC2(reason=msg)
 
         if not isinstance(resources, (tuple, list, set)):
-            raise exception.EC2APIError(_('Expecting a list of resources'))
+            msg = _('Expecting a list of resources')
+            raise exception.InvalidParameterValue(message=msg)
 
         for r in resources:
             if ec2utils.resource_type_from_id(context, r) != 'instance':
-                raise exception.EC2APIError(_('Only instances implemented'))
+                msg = _('Only instances implemented')
+                raise exception.InvalidParameterValue(message=msg)
 
         if not isinstance(tags, (tuple, list, set)):
-            raise exception.EC2APIError(_('Expecting a list of tagSets'))
+            msg = _('Expecting a list of tagSets')
+            raise exception.InvalidParameterValue(message=msg)
 
         for ec2_id in resources:
             instance_uuid = ec2utils.ec2_inst_id_to_uuid(context, ec2_id)
             instance = self.compute_api.get(context, instance_uuid)
             for tag in tags:
                 if not isinstance(tag, dict):
-                    raise exception.EC2APIError(_
-                            ('Expecting tagSet to be key/value pairs'))
+                    msg = _('Expecting tagSet to be key/value pairs')
+                    raise exception.InvalidParameterValue(message=msg)
 
                 key = tag.get('key', None)
                 if key is None:
-                    raise exception.EC2APIError(_('Expecting key to be set'))
+                    msg = _('Expecting key to be set')
+                    raise exception.InvalidParameterValue(message=msg)
 
                 self.compute_api.delete_instance_metadata(context,
                         instance, key)
@@ -1815,8 +1818,8 @@ class CloudController(object):
                     elif key_name == 'resource_type':
                         for res_type in val:
                             if res_type != 'instance':
-                                raise exception.EC2APIError(_
-                                        ('Only instances implemented'))
+                                raise exception.InvalidParameterValue(
+                                    message=_('Only instances implemented'))
                             search_block[key_name] = 'instance'
                     if len(search_block.keys()) > 0:
                         search_filts.append(search_block)
@@ -1835,11 +1838,11 @@ class CloudController(object):
 class EC2SecurityGroupExceptions(object):
     @staticmethod
     def raise_invalid_property(msg):
-        raise exception.InvalidParameterValue(err=msg)
+        raise exception.InvalidParameterValue(message=msg)
 
     @staticmethod
     def raise_group_already_exists(msg):
-        raise exception.EC2APIError(message=msg)
+        raise exception.InvalidGroupDuplicateEC2(message=msg)
 
     @staticmethod
     def raise_invalid_group(msg):
@@ -1850,11 +1853,11 @@ class EC2SecurityGroupExceptions(object):
         if decoding_exception:
             raise decoding_exception
         else:
-            raise exception.EC2APIError(_("Invalid CIDR"))
+            raise exception.InvalidParameterValue(message=_("Invalid CIDR"))
 
     @staticmethod
     def raise_over_quota(msg):
-        raise exception.EC2APIError(message=msg)
+        raise exception.SecurityGroupLimitExceeded(msg)
 
     @staticmethod
     def raise_not_found(msg):

@@ -321,7 +321,7 @@ class CloudTestCase(test.TestCase):
         self.stubs.Set(network_api.API, 'disassociate_floating_ip',
                                     fake_disassociate_floating_ip)
 
-        self.assertRaises(exception.EC2APIError,
+        self.assertRaises(exception.UnsupportedOperationEC2,
                           self.cloud.disassociate_address,
                           self.context, public_ip=address)
 
@@ -424,7 +424,7 @@ class CloudTestCase(test.TestCase):
             result = create(self.context, name, descript)
 
         # 11'th group should fail
-        self.assertRaises(exception.EC2APIError,
+        self.assertRaises(exception.SecurityGroupLimitExceeded,
                           create, self.context, 'foo', 'bar')
 
     def test_delete_security_group_by_id(self):
@@ -446,7 +446,7 @@ class CloudTestCase(test.TestCase):
 
     def test_delete_security_group_no_params(self):
         delete = self.cloud.delete_security_group
-        self.assertRaises(exception.EC2APIError, delete, self.context)
+        self.assertRaises(exception.MissingParameterEC2, delete, self.context)
 
     def test_authorize_security_group_ingress(self):
         kwargs = {'project_id': self.context.project_id, 'name': 'test'}
@@ -576,12 +576,14 @@ class CloudTestCase(test.TestCase):
                                        {'project_id': self.context.project_id,
                                         'name': 'test'})
         authz = self.cloud.authorize_security_group_ingress
-        self.assertRaises(exception.EC2APIError, authz, self.context, 'test')
+        self.assertRaises(exception.MissingParameterEC2, authz, self.context,
+                          'test')
 
     def test_authorize_security_group_ingress_missing_group_name_or_id(self):
         kwargs = {'project_id': self.context.project_id, 'name': 'test'}
         authz = self.cloud.authorize_security_group_ingress
-        self.assertRaises(exception.EC2APIError, authz, self.context, **kwargs)
+        self.assertRaises(exception.MissingParameterEC2, authz, self.context,
+                          **kwargs)
 
     def test_authorize_security_group_ingress_already_exists(self):
         kwargs = {'project_id': self.context.project_id, 'name': 'test'}
@@ -589,8 +591,8 @@ class CloudTestCase(test.TestCase):
         authz = self.cloud.authorize_security_group_ingress
         kwargs = {'to_port': '999', 'from_port': '999', 'ip_protocol': 'tcp'}
         authz(self.context, group_name=sec['name'], **kwargs)
-        self.assertRaises(exception.EC2APIError, authz, self.context,
-                          group_name=sec['name'], **kwargs)
+        self.assertRaises(exception.InvalidPermissionDuplicateEC2, authz,
+                          self.context, group_name=sec['name'], **kwargs)
 
     def test_security_group_ingress_quota_limit(self):
         self.flags(quota_security_group_rules=20)
@@ -602,8 +604,8 @@ class CloudTestCase(test.TestCase):
             authz(self.context, group_id=sec_group['id'], **kwargs)
 
         kwargs = {'to_port': 121, 'from_port': 121, 'ip_protocol': 'tcp'}
-        self.assertRaises(exception.EC2APIError, authz, self.context,
-                              group_id=sec_group['id'], **kwargs)
+        self.assertRaises(exception.SecurityGroupLimitExceeded, authz,
+                          self.context, group_id=sec_group['id'], **kwargs)
 
     def _test_authorize_security_group_no_ports_with_source_group(self, proto):
         kwargs = {'project_id': self.context.project_id, 'name': 'test'}
@@ -642,7 +644,7 @@ class CloudTestCase(test.TestCase):
 
         authz = self.cloud.authorize_security_group_ingress
         auth_kwargs = {'ip_protocol': proto}
-        self.assertRaises(exception.EC2APIError, authz, self.context,
+        self.assertRaises(exception.MissingParameterEC2, authz, self.context,
                           group_name=sec['name'], **auth_kwargs)
 
         db.security_group_destroy(self.context, sec['id'])
@@ -662,7 +664,7 @@ class CloudTestCase(test.TestCase):
     def test_revoke_security_group_ingress_missing_group_name_or_id(self):
         kwargs = {'to_port': '999', 'from_port': '999', 'ip_protocol': 'tcp'}
         revoke = self.cloud.revoke_security_group_ingress
-        self.assertRaises(exception.EC2APIError, revoke,
+        self.assertRaises(exception.MissingParameterEC2, revoke,
                 self.context, **kwargs)
 
     def test_delete_security_group_in_use_by_group(self):
@@ -1523,8 +1525,8 @@ class CloudTestCase(test.TestCase):
 
     def test_register_image_empty(self):
         register_image = self.cloud.register_image
-        self.assertRaises(exception.EC2APIError, register_image, self.context,
-                          image_location=None)
+        self.assertRaises(exception.MissingParameterEC2, register_image,
+                          self.context, image_location=None)
 
     def test_register_image_name(self):
         register_image = self.cloud.register_image
@@ -1671,7 +1673,7 @@ class CloudTestCase(test.TestCase):
         self.assertTrue(filter(lambda k: k['keyName'] == 'test2', keys))
 
     def test_describe_bad_key_pairs(self):
-        self.assertRaises(exception.KeypairNotFound,
+        self.assertRaises(exception.InvalidKeyPairNotFoundEC2,
             self.cloud.describe_key_pairs, self.context,
             key_name=['DoesNotExist'])
 
@@ -1707,7 +1709,7 @@ class CloudTestCase(test.TestCase):
         f.close
         key_name = 'testimportkey'
         public_key_material = base64.b64encode(dummypub)
-        self.assertRaises(exception.EC2APIError,
+        self.assertRaises(exception.KeypairLimitExceeded,
             self.cloud.import_key_pair, self.context, key_name,
             public_key_material)
 
@@ -1735,7 +1737,7 @@ class CloudTestCase(test.TestCase):
             self.assertEqual(result['keyName'], key_name)
 
         # 11'th group should fail
-        self.assertRaises(exception.EC2APIError,
+        self.assertRaises(exception.KeypairLimitExceeded,
                           self.cloud.create_key_pair,
                           self.context,
                           'foo')
@@ -1828,7 +1830,7 @@ class CloudTestCase(test.TestCase):
 
         self.stubs.UnsetAll()
         self.stubs.Set(fake._FakeImageService, 'show', fake_show_no_state)
-        self.assertRaises(exception.EC2APIError, run_instances,
+        self.assertRaises(exception.IncorrectStateEC2, run_instances,
                           self.context, **kwargs)
 
     def test_run_instances_image_state_invalid(self):
@@ -1849,7 +1851,7 @@ class CloudTestCase(test.TestCase):
 
         self.stubs.UnsetAll()
         self.stubs.Set(fake._FakeImageService, 'show', fake_show_decrypt)
-        self.assertRaises(exception.EC2APIError, run_instances,
+        self.assertRaises(exception.IncorrectStateEC2, run_instances,
                           self.context, **kwargs)
 
     def test_run_instances_image_status_active(self):
@@ -2643,7 +2645,7 @@ class CloudTestCase(test.TestCase):
         self.assertEqual(tags, [inst2_key_baz, inst1_key_bax])
 
         # And we should fail on supported resource types
-        self.assertRaises(exception.EC2APIError,
+        self.assertRaises(exception.InvalidParameterValue,
                           self.cloud.describe_tags,
                           self.context,
                           filter=[{'name': 'resource_type',
